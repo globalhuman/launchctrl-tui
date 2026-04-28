@@ -1,0 +1,18 @@
+[tools]
+rust = "1.94.1"
+
+[tasks.build]
+description = "Build the Rust TUI"
+run = "cargo build"
+
+[tasks.dev]
+description = "Run the Rust TUI in development"
+run = "cargo run"
+
+[tasks.fmt]
+description = "Format Rust sources"
+run = "cargo fmt"
+
+[tasks.check]
+description = "Check the Rust TUI"
+run = "cargo check"

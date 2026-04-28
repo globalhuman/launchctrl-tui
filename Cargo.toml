@@ -1,0 +1,11 @@
+[package]
+name = "launchctrl-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+crossterm = "0.28"
+plist = "1.7"
+ratatui = "0.29"
+walkdir = "2.5"
