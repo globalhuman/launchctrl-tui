@@ -16,22 +16,35 @@ A Rust terminal UI for inspecting and controlling macOS startup, login, and back
 
 ## Install Latest Release
 
-Use the install script with your GitHub repository name:
+Install with Homebrew:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install-latest.sh | bash -s -- --repo OWNER/REPO
+brew tap CarterMcAlister/tools
+brew install launchctrl-tui
+```
+
+Or install directly without tapping first:
+
+```sh
+brew install CarterMcAlister/tools/launchctrl-tui
+```
+
+You can also use the install script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/CarterMcAlister/launchctrl-tui/main/scripts/install-latest.sh | bash -s -- --repo CarterMcAlister/launchctrl-tui
 ```
 
 Or from a local clone:
 
 ```sh
-scripts/install-latest.sh --repo OWNER/REPO
+scripts/install-latest.sh --repo CarterMcAlister/launchctrl-tui
 ```
 
 The script installs to `~/.local/bin` by default. Override with:
 
 ```sh
-INSTALL_DIR=/usr/local/bin scripts/install-latest.sh --repo OWNER/REPO
+INSTALL_DIR=/usr/local/bin scripts/install-latest.sh --repo CarterMcAlister/launchctrl-tui
 ```
 
 ## Build From Source
