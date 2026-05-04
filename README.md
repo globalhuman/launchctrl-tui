@@ -1,8 +1,9 @@
 # launchctrl-tui
 
-A Rust terminal UI for inspecting and controlling macOS startup, login, and background items.
+<img width="943" height="603" alt="Screenshot 2026-05-04 at 1 29 55 PM" src="https://github.com/user-attachments/assets/c59869f3-07ac-4afe-ba55-aa40e77cbd14" />
 
-`launchctrl-tui` started from the discovery patterns in `maclaunch.sh`, then expands coverage for modern macOS Background Task Management data from `sfltool dumpbtm`.
+
+A Rust terminal UI for inspecting and controlling macOS startup, login, and background items.
 
 ## Features
 
@@ -23,22 +24,10 @@ brew tap CarterMcAlister/tools
 brew install launchctrl-tui
 ```
 
-Or install directly without tapping first:
-
-```sh
-brew install CarterMcAlister/tools/launchctrl-tui
-```
-
 You can also use the install script:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/CarterMcAlister/launchctrl-tui/main/scripts/install-latest.sh | bash -s -- --repo CarterMcAlister/launchctrl-tui
-```
-
-Or from a local clone:
-
-```sh
-scripts/install-latest.sh --repo CarterMcAlister/launchctrl-tui
 ```
 
 The script installs to `~/.local/bin` by default. Override with:
