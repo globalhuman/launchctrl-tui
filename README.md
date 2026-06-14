@@ -13,6 +13,7 @@ A Rust terminal UI for inspecting and controlling macOS startup, login, and back
 - View LaunchAgents, LaunchDaemons, cron jobs, login hooks, login items, system extensions, kernel extensions, periodic scripts, and modern background items
 - Control launchd plist items with `launchctl`
 - Best-effort actions for modern Background Task Management rows when they expose a safe launchd plist, app path, executable path, or bundle id
+- User-only startup mode that avoids sudo and root/system-readable sources
 - Optional startup mode that skips sources likely to require sudo/root-readable access
 
 ## Install Latest Release
@@ -60,11 +61,21 @@ MISE_TRUSTED_CONFIG_PATHS="$PWD/mise.toml" mise exec rust@1.94.1 -- cargo run
 
 ## Flags
 
+Run a user-only view that avoids sudo and root/system-readable sources:
+
+```sh
+launchctrl-tui --user
+```
+
+`--user` lists only current-user safe sources: `~/Library/LaunchAgents`, the current user crontab, and user-safe Background Task Management rows. It excludes LaunchDaemons, `/System`, `/etc`, `/var/db`, root-owned rows, system extensions, kernel extensions, and periodic scripts. It never invokes `sudo`.
+
 Include Apple system launch items and system-only sources:
 
 ```sh
 launchctrl-tui --system
 ```
+
+`--system` is the only mode that may use interactive `sudo launchctl` for system-domain actions. If macOS sudo/PAM is configured for Touch ID, authentication is handled by macOS; `launchctrl-tui` does not implement Touch ID itself.
 
 Skip sources that commonly need sudo/root-readable access during startup:
 
@@ -72,7 +83,7 @@ Skip sources that commonly need sudo/root-readable access during startup:
 launchctrl-tui --skip-sudo
 ```
 
-You can combine them; `--skip-sudo` takes precedence for sudo-sensitive sources.
+You can combine `--skip-sudo` with `--system` or `--user`; `--skip-sudo` takes precedence for sudo-sensitive sources and actions. It still shows current-user safe sources but does not query the system disabled map or retry actions with sudo.
 
 ## Keybindings
 
@@ -103,6 +114,12 @@ Default sources:
   - `~/Library/LaunchDaemons`
   - `/etc/emond.d/rules`
 - System extensions from `systemextensionsctl list`
+
+With `--user`:
+
+- `~/Library/LaunchAgents`
+- Current user cron jobs from `crontab -l`
+- User-safe Background Task Management rows
 
 With `--system`:
 
@@ -160,7 +177,7 @@ Modern Background Task Management rows keep `Launch` as the category only and sp
 
 macOS does not expose a universal per-item CLI load/unload command for every Background Task Management record, so unsupported combinations show an explanatory message.
 
-Some actions require `sudo`, Full Disk Access, or may be blocked by SIP for `/System` items.
+System-domain actions require `--system` or root privileges. In `--system`, failed system-domain `launchctl` actions may retry with interactive `sudo launchctl` rather than `sudo -n`, so macOS can present Touch ID when sudo/PAM is configured. Full Disk Access or SIP may still block some `/System` items.
 
 ## GitHub Actions
 

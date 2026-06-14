@@ -23,34 +23,17 @@ use ratatui::{
 };
 use walkdir::WalkDir;
 
-const STARTUP_DIRS: &[&str] = &[
-    "/Library/LaunchAgents",
-    "/Library/LaunchDaemons",
-    "~/Library/LaunchAgents",
-    "~/Library/LaunchDaemons",
-    "/etc/emond.d/rules",
-];
-
-const SYSTEM_DIRS: &[&str] = &[
-    "/System/Library/LaunchAgents",
-    "/System/Library/LaunchDaemons",
-];
-
 fn main() -> Result<()> {
-    let mut options = AppOptions::default();
-    for arg in env::args().skip(1) {
-        match arg.as_str() {
-            "--system" | "-s" => options.include_system = true,
-            "--skip-sudo" => options.skip_sudo_sources = true,
-            "--help" | "-h" => {
-                println!(
-                    "launchctrl-tui [--system] [--skip-sudo]\n\nKeys: ↑/↓ move, / text filter, f status filter, t type filter, Esc clear filters, r refresh, b load/bootstrap, u unload/bootout, s start/kickstart, x/K kill, q quit"
-                );
-                return Ok(());
-            }
-            other => return Err(anyhow!("unknown argument: {other}")),
+    let options = match parse_options(env::args().skip(1)) {
+        Ok(options) => options,
+        Err(error) if error.to_string() == "help requested" => {
+            println!(
+                "launchctrl-tui [--user] [--system] [--skip-sudo]\n\nKeys: ↑/↓ move, / text filter, f status filter, t type filter, Esc clear filters, r refresh, b load/bootstrap, u unload/bootout, s start/kickstart, x/K kill, q quit"
+            );
+            return Ok(());
         }
-    }
+        Err(error) => return Err(error),
+    };
 
     let terminal = init_terminal()?;
     let result = App::new(options)?.run(terminal);
@@ -58,10 +41,34 @@ fn main() -> Result<()> {
     result
 }
 
+fn parse_options(args: impl IntoIterator<Item = String>) -> Result<AppOptions> {
+    let mut options = AppOptions::default();
+    for arg in args {
+        match arg.as_str() {
+            "--user" => options.user_only = true,
+            "--system" | "-s" => options.include_system = true,
+            "--skip-sudo" => options.skip_sudo_sources = true,
+            "--help" | "-h" => return Err(anyhow!("help requested")),
+            other => return Err(anyhow!("unknown argument: {other}")),
+        }
+    }
+
+    if options.user_only && options.include_system {
+        return Err(anyhow!("--user and --system cannot be used together"));
+    }
+
+    Ok(options)
+}
+
 fn init_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    enter_terminal_ui()?;
+    Terminal::new(CrosstermBackend::new(io::stdout())).context("failed to initialize terminal")
+}
+
+fn enter_terminal_ui() -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
-    Terminal::new(CrosstermBackend::new(io::stdout())).context("failed to initialize terminal")
+    Ok(())
 }
 
 fn restore_terminal() -> Result<()> {
@@ -175,10 +182,104 @@ impl StatusFilter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiscoverySource {
+    UserLaunchAgents,
+    LibraryLaunchAgents,
+    LibraryLaunchDaemons,
+    UserLaunchDaemons,
+    EmondRules,
+    SystemLaunchAgents,
+    SystemLaunchDaemons,
+    LoginHooks,
+    LoginItems,
+    BackgroundTasks,
+    CurrentUserCrontab,
+    SystemExtensions,
+    KernelExtensions,
+    PeriodicScripts,
+}
+
+impl DiscoverySource {
+    fn startup_dir(self) -> Option<&'static str> {
+        match self {
+            Self::UserLaunchAgents => Some("~/Library/LaunchAgents"),
+            Self::LibraryLaunchAgents => Some("/Library/LaunchAgents"),
+            Self::LibraryLaunchDaemons => Some("/Library/LaunchDaemons"),
+            Self::UserLaunchDaemons => Some("~/Library/LaunchDaemons"),
+            Self::EmondRules => Some("/etc/emond.d/rules"),
+            Self::SystemLaunchAgents => Some("/System/Library/LaunchAgents"),
+            Self::SystemLaunchDaemons => Some("/System/Library/LaunchDaemons"),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct AppOptions {
     include_system: bool,
+    user_only: bool,
     skip_sudo_sources: bool,
+}
+
+impl AppOptions {
+    fn discovery_sources(self) -> Vec<DiscoverySource> {
+        if self.user_only {
+            return vec![
+                DiscoverySource::UserLaunchAgents,
+                DiscoverySource::CurrentUserCrontab,
+                DiscoverySource::BackgroundTasks,
+            ];
+        }
+
+        if self.skip_sudo_sources {
+            return vec![
+                DiscoverySource::UserLaunchAgents,
+                DiscoverySource::CurrentUserCrontab,
+                DiscoverySource::BackgroundTasks,
+            ];
+        }
+
+        let mut sources = vec![
+            DiscoverySource::LibraryLaunchAgents,
+            DiscoverySource::LibraryLaunchDaemons,
+            DiscoverySource::UserLaunchAgents,
+            DiscoverySource::UserLaunchDaemons,
+            DiscoverySource::EmondRules,
+            DiscoverySource::LoginHooks,
+            DiscoverySource::LoginItems,
+            DiscoverySource::BackgroundTasks,
+            DiscoverySource::CurrentUserCrontab,
+            DiscoverySource::SystemExtensions,
+        ];
+
+        if self.include_system {
+            sources.extend([
+                DiscoverySource::SystemLaunchAgents,
+                DiscoverySource::SystemLaunchDaemons,
+                DiscoverySource::KernelExtensions,
+                DiscoverySource::PeriodicScripts,
+            ]);
+        }
+
+        sources
+    }
+
+    fn disabled_domains(self, uid: &str) -> Vec<String> {
+        let mut domains = vec![format!("gui/{uid}")];
+        if !self.user_only && !self.skip_sudo_sources {
+            domains.push("system".to_string());
+        }
+        domains
+    }
+
+    fn permits_interactive_sudo(self) -> bool {
+        self.include_system && !self.user_only && !self.skip_sudo_sources
+    }
+
+    fn permits_sudo_for_domain(self, domain: &str) -> bool {
+        domain == "system" && self.permits_interactive_sudo()
+    }
 }
 
 struct App {
@@ -364,7 +465,7 @@ impl App {
             return Ok(());
         };
 
-        let result = action.run(&item);
+        let result = action.run(&item, self.options);
         self.message = match result {
             Ok(output) => output,
             Err(error) => format!("{error:#}"),
@@ -399,7 +500,9 @@ impl App {
     }
 
     fn draw_header(&self, frame: &mut Frame, area: Rect) {
-        let title = if self.options.skip_sudo_sources {
+        let title = if self.options.user_only {
+            "launchctrl-tui — macOS startup items (user-only)"
+        } else if self.options.skip_sudo_sources {
             "launchctrl-tui — macOS startup items (skip sudo sources)"
         } else if self.options.include_system {
             "launchctrl-tui — macOS startup items (including system-only sources)"
@@ -507,19 +610,19 @@ enum Action {
 }
 
 impl Action {
-    fn run(self, item: &LaunchItem) -> Result<String> {
+    fn run(self, item: &LaunchItem, options: AppOptions) -> Result<String> {
         if item.kind == ItemKind::LoginItem && matches!(self, Self::Bootstrap | Self::Bootout) {
             let verb = match self {
                 Self::Bootstrap => "enable",
                 Self::Bootout => "disable",
                 _ => unreachable!(),
             };
-            let target = run_launchctl_enable_disable(verb, item)?;
+            let target = run_launchctl_enable_disable(verb, item, options)?;
             return Ok(format!("Ran launchctl {verb} {target}"));
         }
 
         if item.kind == ItemKind::BackgroundTask {
-            return self.run_background_task_action(item);
+            return self.run_background_task_action(item, options);
         }
 
         if !item.kind.supports_launchctl_actions() {
@@ -541,6 +644,7 @@ impl Action {
                 item.label
             ));
         }
+        ensure_domain_action_privilege(&item.label, &item.domain, options)?;
 
         let (program, args): (&str, Vec<String>) = match self {
             Self::Bootstrap => (
@@ -569,11 +673,15 @@ impl Action {
             ),
         };
 
-        run_command(program, &args)?;
+        if program == "launchctl" {
+            run_launchctl_command(&args, options.permits_sudo_for_domain(&item.domain))?;
+        } else {
+            run_command(program, &args)?;
+        }
         Ok(format!("Ran launchctl {}", args.join(" ")))
     }
 
-    fn run_background_task_action(self, item: &LaunchItem) -> Result<String> {
+    fn run_background_task_action(self, item: &LaunchItem, options: AppOptions) -> Result<String> {
         if item
             .path
             .extension()
@@ -593,8 +701,9 @@ impl Action {
                 };
                 let mut candidates = launchctl_label_candidates(item);
                 push_candidate(&mut candidates, &label);
-                let target =
-                    run_launchctl_enable_disable_in_domain(verb, item, &domain, candidates)?;
+                let target = run_launchctl_enable_disable_in_domain(
+                    verb, item, &domain, candidates, options,
+                )?;
                 return Ok(format!("Ran launchctl {verb} {target}"));
             }
             let args = match self {
@@ -602,7 +711,10 @@ impl Action {
                 Self::Kill => vec!["kill".into(), "TERM".into(), target],
                 Self::Bootstrap | Self::Bootout => unreachable!(),
             };
-            run_command("launchctl", &args)?;
+            if domain == "system" {
+                ensure_domain_action_privilege(&item.label, &domain, options)?;
+            }
+            run_launchctl_command(&args, options.permits_sudo_for_domain(&domain))?;
             return Ok(format!("Ran launchctl {}", args.join(" ")));
         }
 
@@ -640,7 +752,7 @@ impl Action {
                     Self::Bootout => "disable",
                     _ => unreachable!(),
                 };
-                let target = run_launchctl_enable_disable(verb, item)?;
+                let target = run_launchctl_enable_disable(verb, item, options)?;
                 Ok(format!("Ran launchctl {verb} {target}"))
             }
             Self::Start => Err(anyhow!(
@@ -651,10 +763,20 @@ impl Action {
     }
 }
 
-fn run_launchctl_enable_disable(verb: &str, item: &LaunchItem) -> Result<String> {
+fn run_launchctl_enable_disable(
+    verb: &str,
+    item: &LaunchItem,
+    options: AppOptions,
+) -> Result<String> {
     let uid = current_gui_uid()?;
     let domain = format!("gui/{uid}");
-    run_launchctl_enable_disable_in_domain(verb, item, &domain, launchctl_label_candidates(item))
+    run_launchctl_enable_disable_in_domain(
+        verb,
+        item,
+        &domain,
+        launchctl_label_candidates(item),
+        options,
+    )
 }
 
 fn run_launchctl_enable_disable_in_domain(
@@ -662,7 +784,12 @@ fn run_launchctl_enable_disable_in_domain(
     item: &LaunchItem,
     domain: &str,
     mut candidates: Vec<String>,
+    options: AppOptions,
 ) -> Result<String> {
+    if domain == "system" {
+        ensure_domain_action_privilege(&item.label, domain, options)?;
+    }
+
     candidates.dedup();
 
     if candidates.is_empty() {
@@ -678,7 +805,7 @@ fn run_launchctl_enable_disable_in_domain(
     for candidate in candidates {
         let target = format!("{domain}/{candidate}");
         let args = vec![verb.to_string(), target.clone()];
-        match run_launchctl_command(&args, domain == "system") {
+        match run_launchctl_command(&args, options.permits_sudo_for_domain(domain)) {
             Ok(()) => {
                 successes.push(target.clone());
                 if !is_group {
@@ -697,6 +824,21 @@ fn run_launchctl_enable_disable_in_domain(
         "could not run launchctl {verb} for {}; tried:\n{}",
         item.label,
         failures.join("\n")
+    ))
+}
+
+fn ensure_domain_action_privilege(label: &str, domain: &str, options: AppOptions) -> Result<()> {
+    if domain != "system" || current_uid().is_ok_and(|uid| uid == "0") {
+        return Ok(());
+    }
+
+    if options.permits_sudo_for_domain(domain) {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "{} targets the system launchctl domain; run with --system or root privileges to control it",
+        label
     ))
 }
 
@@ -761,17 +903,35 @@ fn run_launchctl_command(args: &[String], allow_sudo: bool) -> Result<()> {
     match run_command("launchctl", args) {
         Ok(()) => Ok(()),
         Err(error) if allow_sudo && current_uid().is_ok_and(|uid| uid != "0") => {
-            let mut sudo_args = vec!["-n".to_string(), "launchctl".to_string()];
-            sudo_args.extend(args.iter().cloned());
-            run_command("sudo", &sudo_args).map_err(|sudo_error| {
+            run_interactive_sudo_launchctl(args).map_err(|sudo_error| {
                 anyhow!(
-                    "launchctl {} failed: {error:#}\nsudo -n launchctl {} also failed: {sudo_error:#}\nTry running launchctrl-tui with sudo for system LaunchDaemons.",
+                    "launchctl {} failed: {error:#}\nsudo launchctl {} also failed: {sudo_error:#}",
                     args.join(" "),
                     args.join(" ")
                 )
             })
         }
         Err(error) => Err(error),
+    }
+}
+
+fn run_interactive_sudo_launchctl(args: &[String]) -> Result<()> {
+    restore_terminal().context("failed to leave TUI before sudo")?;
+    let status = Command::new("sudo")
+        .arg("launchctl")
+        .args(args)
+        .status()
+        .with_context(|| format!("failed to run sudo launchctl {}", args.join(" ")));
+    let resume_result = enter_terminal_ui().context("failed to restore TUI after sudo");
+
+    match (status, resume_result) {
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(command_error), Err(resume_error)) => Err(anyhow!(
+            "{command_error:#}; additionally failed to restore TUI after sudo: {resume_error:#}"
+        )),
+        (Ok(status), Ok(())) if status.success() => Ok(()),
+        (Ok(status), Ok(())) => Err(anyhow!("sudo launchctl {} exited with {status}", args.join(" "))),
     }
 }
 
@@ -860,32 +1020,36 @@ impl LaunchItem {
 
 fn discover_launch_items(options: AppOptions) -> Result<Vec<LaunchItem>> {
     let uid = current_gui_uid()?;
-    let mut dirs: Vec<PathBuf> = if options.skip_sudo_sources {
-        vec![expand_tilde(&"~/Library/LaunchAgents")]
-    } else {
-        STARTUP_DIRS.iter().map(expand_tilde).collect()
-    };
-    if options.include_system && !options.skip_sudo_sources {
-        dirs.extend(SYSTEM_DIRS.iter().map(expand_tilde));
-    }
+    let sources = options.discovery_sources();
+    let dirs: Vec<PathBuf> = sources
+        .iter()
+        .filter_map(|source| source.startup_dir())
+        .map(|dir| expand_tilde(&dir))
+        .collect();
 
-    let disabled_by_domain = load_disabled_maps(&uid);
+    let disabled_by_domain = load_disabled_maps(&uid, options);
     let mut items = Vec::new();
 
-    if !options.skip_sudo_sources {
+    if sources.contains(&DiscoverySource::LoginHooks) {
         items.extend(discover_login_hooks());
         items.extend(discover_login_items());
     }
-    items.extend(discover_background_tasks(
-        options.skip_sudo_sources,
-        &disabled_by_domain,
-    ));
-    items.extend(discover_cron_jobs());
-    if !options.skip_sudo_sources {
+    if sources.contains(&DiscoverySource::BackgroundTasks) {
+        items.extend(discover_background_tasks(
+            options.user_only || options.skip_sudo_sources,
+            &disabled_by_domain,
+        ));
+    }
+    if sources.contains(&DiscoverySource::CurrentUserCrontab) {
+        items.extend(discover_cron_jobs());
+    }
+    if sources.contains(&DiscoverySource::SystemExtensions) {
         items.extend(discover_system_extensions());
     }
-    if options.include_system && !options.skip_sudo_sources {
+    if sources.contains(&DiscoverySource::KernelExtensions) {
         items.extend(discover_kernel_extensions());
+    }
+    if sources.contains(&DiscoverySource::PeriodicScripts) {
         items.extend(discover_periodic_scripts());
     }
 
@@ -1636,9 +1800,9 @@ fn discover_periodic_scripts() -> Vec<LaunchItem> {
     items
 }
 
-fn load_disabled_maps(uid: &str) -> BTreeMap<String, Vec<String>> {
+fn load_disabled_maps(uid: &str, options: AppOptions) -> BTreeMap<String, Vec<String>> {
     let mut maps = BTreeMap::new();
-    for domain in [format!("gui/{uid}"), "system".to_string()] {
+    for domain in options.disabled_domains(uid) {
         let output = Command::new("launchctl")
             .args(["print-disabled", &domain])
             .output();
@@ -1803,6 +1967,59 @@ fn expand_tilde(path: &&str) -> PathBuf {
 
 fn empty_dash(value: &str) -> &str {
     if value.is_empty() { "-" } else { value }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<AppOptions> {
+        parse_options(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn parses_user_mode() {
+        let options = parse(&["--user"]).unwrap();
+
+        assert!(options.user_only);
+        assert!(!options.include_system);
+    }
+
+    #[test]
+    fn rejects_user_and_system_together() {
+        let error = parse(&["--user", "--system"]).unwrap_err().to_string();
+
+        assert!(error.contains("cannot be used together"));
+    }
+
+    #[test]
+    fn user_source_policy_is_user_safe_only() {
+        let options = parse(&["--user"]).unwrap();
+
+        assert_eq!(
+            options.discovery_sources(),
+            vec![
+                DiscoverySource::UserLaunchAgents,
+                DiscoverySource::CurrentUserCrontab,
+                DiscoverySource::BackgroundTasks,
+            ]
+        );
+    }
+
+    #[test]
+    fn skip_sudo_queries_only_user_disabled_map() {
+        let options = parse(&["--skip-sudo"]).unwrap();
+
+        assert_eq!(options.disabled_domains("501"), vec!["gui/501".to_string()]);
+    }
+
+    #[test]
+    fn only_system_mode_permits_interactive_sudo() {
+        assert!(!parse(&[]).unwrap().permits_interactive_sudo());
+        assert!(!parse(&["--user"]).unwrap().permits_interactive_sudo());
+        assert!(!parse(&["--skip-sudo"]).unwrap().permits_interactive_sudo());
+        assert!(parse(&["--system"]).unwrap().permits_interactive_sudo());
+    }
 }
 
 fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
