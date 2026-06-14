@@ -28,12 +28,17 @@ fn main() -> Result<()> {
         Ok(options) => options,
         Err(error) if error.to_string() == "help requested" => {
             println!(
-                "launchctrl-tui [--user] [--system] [--skip-sudo]\n\nKeys: ↑/↓ move, / text filter, f status filter, t type filter, Esc clear filters, r refresh, b load/bootstrap, u unload/bootout, s start/kickstart, x/K kill, q quit"
+                "launchctrl-tui [--user] [--system] [--skip-sudo] [--version]\n\nKeys: ↑/↓ move, / text filter, f status filter, t type filter, Esc clear filters, r refresh, b load/bootstrap, u unload/bootout, s start/kickstart, x/K kill, q quit"
             );
             return Ok(());
         }
         Err(error) => return Err(error),
     };
+
+    if options.show_version {
+        println!("{}", version_string());
+        return Ok(());
+    }
 
     let terminal = init_terminal()?;
     let result = App::new(options)?.run(terminal);
@@ -48,6 +53,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<AppOptions> {
             "--user" => options.user_only = true,
             "--system" | "-s" => options.include_system = true,
             "--skip-sudo" => options.skip_sudo_sources = true,
+            "--version" | "-V" => options.show_version = true,
             "--help" | "-h" => return Err(anyhow!("help requested")),
             other => return Err(anyhow!("unknown argument: {other}")),
         }
@@ -220,6 +226,7 @@ struct AppOptions {
     include_system: bool,
     user_only: bool,
     skip_sudo_sources: bool,
+    show_version: bool,
 }
 
 impl AppOptions {
@@ -228,7 +235,6 @@ impl AppOptions {
             return vec![
                 DiscoverySource::UserLaunchAgents,
                 DiscoverySource::CurrentUserCrontab,
-                DiscoverySource::BackgroundTasks,
             ];
         }
 
@@ -236,7 +242,6 @@ impl AppOptions {
             return vec![
                 DiscoverySource::UserLaunchAgents,
                 DiscoverySource::CurrentUserCrontab,
-                DiscoverySource::BackgroundTasks,
             ];
         }
 
@@ -248,7 +253,6 @@ impl AppOptions {
             DiscoverySource::EmondRules,
             DiscoverySource::LoginHooks,
             DiscoverySource::LoginItems,
-            DiscoverySource::BackgroundTasks,
             DiscoverySource::CurrentUserCrontab,
             DiscoverySource::SystemExtensions,
         ];
@@ -257,6 +261,7 @@ impl AppOptions {
             sources.extend([
                 DiscoverySource::SystemLaunchAgents,
                 DiscoverySource::SystemLaunchDaemons,
+                DiscoverySource::BackgroundTasks,
                 DiscoverySource::KernelExtensions,
                 DiscoverySource::PeriodicScripts,
             ]);
@@ -280,6 +285,17 @@ impl AppOptions {
     fn permits_sudo_for_domain(self, domain: &str) -> bool {
         domain == "system" && self.permits_interactive_sudo()
     }
+}
+
+fn version_string() -> String {
+    format!(
+        "{} {} (tag: {}, branch: {}, commit: {})",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        option_env!("LAUNCHCTRL_TUI_GIT_TAG").unwrap_or("unknown"),
+        option_env!("LAUNCHCTRL_TUI_GIT_BRANCH").unwrap_or("unknown"),
+        option_env!("LAUNCHCTRL_TUI_GIT_HASH").unwrap_or("unknown"),
+    )
 }
 
 struct App {
@@ -931,7 +947,10 @@ fn run_interactive_sudo_launchctl(args: &[String]) -> Result<()> {
             "{command_error:#}; additionally failed to restore TUI after sudo: {resume_error:#}"
         )),
         (Ok(status), Ok(())) if status.success() => Ok(()),
-        (Ok(status), Ok(())) => Err(anyhow!("sudo launchctl {} exited with {status}", args.join(" "))),
+        (Ok(status), Ok(())) => Err(anyhow!(
+            "sudo launchctl {} exited with {status}",
+            args.join(" ")
+        )),
     }
 }
 
@@ -2001,9 +2020,53 @@ mod tests {
             vec![
                 DiscoverySource::UserLaunchAgents,
                 DiscoverySource::CurrentUserCrontab,
-                DiscoverySource::BackgroundTasks,
             ]
         );
+    }
+
+    #[test]
+    fn skip_sudo_source_policy_avoids_prompting_background_tasks() {
+        let options = parse(&["--skip-sudo"]).unwrap();
+        assert!(
+            !options
+                .discovery_sources()
+                .contains(&DiscoverySource::BackgroundTasks)
+        );
+    }
+
+    #[test]
+    fn default_source_policy_avoids_prompting_background_tasks() {
+        let options = parse(&[]).unwrap();
+        assert!(
+            !options
+                .discovery_sources()
+                .contains(&DiscoverySource::BackgroundTasks)
+        );
+    }
+
+    #[test]
+    fn system_source_policy_includes_background_tasks() {
+        let options = parse(&["--system"]).unwrap();
+        assert!(
+            options
+                .discovery_sources()
+                .contains(&DiscoverySource::BackgroundTasks)
+        );
+    }
+
+    #[test]
+    fn parses_version_mode() {
+        let options = parse(&["--version"]).unwrap();
+        assert!(options.show_version);
+    }
+
+    #[test]
+    fn version_output_includes_build_metadata_labels() {
+        let version = version_string();
+        assert!(version.contains(env!("CARGO_PKG_VERSION")));
+        assert!(version.contains("tag: "));
+        assert!(version.contains("branch: "));
+        assert!(version.contains("commit: "));
     }
 
     #[test]

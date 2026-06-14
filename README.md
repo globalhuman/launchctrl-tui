@@ -61,13 +61,13 @@ MISE_TRUSTED_CONFIG_PATHS="$PWD/mise.toml" mise exec rust@1.94.1 -- cargo run
 
 ## Flags
 
-Run a user-only view that avoids sudo and root/system-readable sources:
+Run a user-only view that avoids sudo, root/system-readable sources, and macOS authorization prompts from Background Task Management queries:
 
 ```sh
 launchctrl-tui --user
 ```
 
-`--user` lists only current-user safe sources: `~/Library/LaunchAgents`, the current user crontab, and user-safe Background Task Management rows. It excludes LaunchDaemons, `/System`, `/etc`, `/var/db`, root-owned rows, system extensions, kernel extensions, and periodic scripts. It never invokes `sudo`.
+`--user` lists only current-user safe sources: `~/Library/LaunchAgents` and the current user crontab. It excludes LaunchDaemons, `/System`, `/etc`, `/var/db`, root-owned rows, Background Task Management rows, system extensions, kernel extensions, and periodic scripts. It never invokes `sudo`.
 
 Include Apple system launch items and system-only sources:
 
@@ -83,7 +83,13 @@ Skip sources that commonly need sudo/root-readable access during startup:
 launchctrl-tui --skip-sudo
 ```
 
-You can combine `--skip-sudo` with `--system` or `--user`; `--skip-sudo` takes precedence for sudo-sensitive sources and actions. It still shows current-user safe sources but does not query the system disabled map or retry actions with sudo.
+You can combine `--skip-sudo` with `--system` or `--user`; `--skip-sudo` takes precedence for sudo-sensitive sources and actions. It still shows current-user safe sources but does not query the system disabled map, run Background Task Management discovery, or retry actions with sudo.
+
+Show the package version plus Git tag, branch, and commit hash embedded at build time:
+
+```sh
+launchctrl-tui --version
+```
 
 ## Keybindings
 
@@ -105,7 +111,6 @@ Default sources:
 
 - Login hooks and logout hooks from `com.apple.loginwindow`
 - Legacy login items from `/var/db/com.apple.xpc.launchd/loginitems.*.plist`
-- Modern Login Items / Allow in Background entries from `sfltool dumpbtm`
 - Cron jobs from `crontab -l`
 - LaunchAgents and LaunchDaemons from:
   - `/Library/LaunchAgents`
@@ -119,16 +124,16 @@ With `--user`:
 
 - `~/Library/LaunchAgents`
 - Current user cron jobs from `crontab -l`
-- User-safe Background Task Management rows
 
 With `--system`:
 
 - `/System/Library/LaunchAgents`
 - `/System/Library/LaunchDaemons`
+- Modern Login Items / Allow in Background entries from `sfltool dumpbtm`
 - Kernel extensions from `kmutil showloaded`
 - Periodic scripts from `/etc/periodic`
 
-With `--skip-sudo`, root/system-oriented sources are skipped where possible, including `/Library/LaunchDaemons`, `/System`, `/var/db`, `/etc`, and root-owned BTM records detected from their path/user.
+With `--skip-sudo`, root/system-oriented sources are skipped where possible, including `/Library/LaunchDaemons`, `/System`, `/var/db`, `/etc`, and Background Task Management discovery.
 
 ## Type Labels
 
